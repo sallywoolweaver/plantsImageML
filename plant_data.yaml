@@ -1,8 +1,0 @@
-path: /home/compsci/Desktop/plants/plants_yolo_dataset
-
-train: images/train
-val: images/val
-
-names:
-  0: Plant 1
-  1: Plant 2
