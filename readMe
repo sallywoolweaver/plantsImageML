@@ -1,0 +1,516 @@
+# 🌱 Plant Detector – Student Guide (YOLO + Raspberry Pi Images)
+
+## 0. Big Picture – What You’re Doing
+
+You are training a **YOLO object detection model** to recognize your plants from Raspberry Pi photos.
+
+Pipeline:
+
+1. Get your **Pi images onto the server**
+2. Use `define_masks.py` to **draw polygons** around each plant in some images  
+3. Convert those polygons into **YOLO labels** using `convert_masks_to_yolo.py`
+4. Check the dataset structure
+5. Train YOLO with `plant_data.yaml`
+6. Run predictions + debug what the model is doing
+
+You will work in **your own folder**, named after you, so you don’t affect anyone else’s work.
+
+---
+
+## 1. Create Your Personal Project Folder & Clone the Template
+
+You will each have your own folder on the server Desktop, named with **your name**.
+
+### 1.1 Make your folder on the Desktop
+
+From a terminal on the server:
+
+```bash
+cd /home/compsci/Desktop
+
+# Replace YOUR_NAME with something like sally, lauren, evan, etc.
+mkdir YOUR_NAME_plants
+cd YOUR_NAME_plants
+```
+
+Now you are inside your own working folder:
+
+```bash
+/home/compsci/Desktop/YOUR_NAME_plants
+```
+
+### 1.2 Clone the template repo into your folder
+
+Your teacher will give you the repo URL, which looks like:
+
+```text
+https://github.com/.../plants-ml-template.git
+```
+
+Run:
+
+```bash
+cd /home/compsci/Desktop/YOUR_NAME_plants
+
+git clone <https://github.com/sallywoolweaver/plantsImageML> .
+```
+
+> The final `.` means “clone into the **current** folder”.
+
+Now run:
+
+```bash
+ls
+```
+
+You should see files like:
+
+```text
+convert_masks_to_yolo.py
+debug_model.py
+define_masks.py
+file_structure.py
+plant_data.yaml
+yolov8n.pt / yolo11n.pt   (base models)
+```
+
+> ❗ Do **NOT** push your large images or model weights back to Git unless your teacher tells you to. They stay on the server.
+
+---
+
+## 2. Use the Shared Python Environment (venv)
+
+A Python **virtual environment** is already set up on the server with all required libraries (ultralytics, matplotlib, pillow, etc.).  
+You will **reuse** that environment so we don’t reinstall packages 30 times.
+
+From **your folder**:
+
+```bash
+cd /home/compsci/Desktop/YOUR_NAME_plants
+source /home/compsci/Desktop/plants/.venv/bin/activate
+```
+
+You should now see:
+
+```bash
+(.venv) compsci@compsci-System-Product-Name:~/Desktop/YOUR_NAME_plants$
+```
+
+If you don’t see `(.venv)` at the left, you forgot to activate the environment.
+
+You must activate the venv **every time** you open a new terminal session.
+
+---
+
+## 3. Know Where Your Raspberry Pi Images Are
+
+Your Pi will upload images into a folder like:
+
+```bash
+/home/compsci/Downloads/rasppiupload-1-002/rasppiupload
+```
+
+Ask your teacher **which folder is yours**, and write it down.
+
+We will call it:
+
+```text
+/ABSOLUTE/PATH/TO/YOUR_PI_IMAGES
+```
+
+Example:
+
+```text
+/home/compsci/Downloads/rasppiupload-1-002/rasppiupload
+```
+
+You’ll use this exact path in multiple commands.
+
+---
+
+## 4. What is `plant_data.yaml` and What is YAML?
+
+A **YAML file** (`.yaml` or `.yml`) is a plain-text **configuration file** that tells a program:
+
+- where things are  
+- what options/settings to use  
+- what names to associate with numeric IDs
+
+For YOLO, **`plant_data.yaml`** tells it:
+
+- Where your dataset lives  
+- Where the training and validation images are  
+- What each **class ID** means (e.g., `0 = Plant 1`, `1 = Plant 2`)
+
+Example `plant_data.yaml`:
+
+```yaml
+path: /home/compsci/Desktop/YOUR_NAME_plants/plants_yolo_dataset
+
+train: images/train
+val: images/val
+
+names:
+  0: Plant 1
+  1: Plant 2
+  2: Plant 3
+```
+
+Breakdown:
+
+- `path:` → absolute path to your dataset root (inside **your** folder)
+- `train:` → subfolder for training images (relative to `path`)
+- `val:` → subfolder for validation images (relative to `path`)
+- `names:` → mapping from class **index → human-readable label**
+
+⚠ **Rules of YAML:**
+
+- Indentation matters; use **spaces only**, not tabs  
+- `key: value` pairs define settings  
+- Don’t randomly add tabs or change alignment, or it will break
+
+You will need to edit only the `path:` line so it points to **your folder**, not your teacher’s.
+
+---
+
+## 5. Step 1 – Label Plants with `define_masks.py`
+
+You will draw **polygons** around each plant in some images. This “teaches” the model where the plants are.
+
+From your folder:
+
+```bash
+cd /home/compsci/Desktop/YOUR_NAME_plants
+source /home/compsci/Desktop/plants/.venv/bin/activate
+```
+
+Run:
+
+```bash
+python define_masks.py   "/ABSOLUTE/PATH/TO/YOUR_PI_IMAGES"   masks.json   --plant_ids 1 2
+```
+
+- `"/ABSOLUTE/PATH/TO/YOUR_PI_IMAGES"` → your Pi image folder path  
+- `masks.json` → file where all polygon annotations will be saved  
+- `--plant_ids 1 2` → which plants you are labeling (Plant 1, Plant 2).  
+  - If you have 3 plants, you might use `--plant_ids 1 2 3`.
+
+### 5.1 Controls in the Labeling Window
+
+For **each plant** on each image:
+
+- **Left click** → add a point (vertex) of the polygon  
+- **Enter** → finish the polygon for this plant and move to the next plant ID  
+- **Backspace** → undo the last point  
+- **Esc** → clear the current polygon and start that plant again  
+- **Q** → quit labeling early
+
+Label at least **10–20 good images** where the plants are clearly visible. This will be your training data.
+
+Result: a `masks.json` file in your folder that contains all your polygons.
+
+---
+
+## 6. Step 2 – Convert `masks.json` → YOLO Dataset (`convert_masks_to_yolo.py`)
+
+YOLO expects bounding boxes in `.txt` label files, not polygons.  
+`convert_masks_to_yolo.py` converts your polygons into YOLO’s label format and builds the dataset folders.
+
+From your folder:
+
+```bash
+cd /home/compsci/Desktop/YOUR_NAME_plants
+source /home/compsci/Desktop/plants/.venv/bin/activate
+
+python convert_masks_to_yolo.py   masks.json   "/ABSOLUTE/PATH/TO/YOUR_PI_IMAGES"   --out_root plants_yolo_dataset
+```
+
+What this script does:
+
+- Reads your polygons from `masks.json`  
+- Matches them with image files in your Pi folder  
+- Converts polygons → bounding boxes (YOLO format)  
+- Creates:
+
+```text
+plants_yolo_dataset/
+  images/
+    train/
+    val/
+  labels/
+    train/
+    val/
+```
+
+Now you have a **train/val split** and labels ready for YOLO.
+
+If you forget arguments, you can always run:
+
+```bash
+python convert_masks_to_yolo.py -h
+```
+
+to see help.
+
+---
+
+## 7. Step 3 – Fix `plant_data.yaml` for YOUR Folder
+
+Open `plant_data.yaml` in your folder and change the `path:` line:
+
+```yaml
+path: /home/compsci/Desktop/YOUR_NAME_plants/plants_yolo_dataset
+
+train: images/train
+val: images/val
+
+names:
+  0: Plant 1
+  1: Plant 2
+  # 2: Plant 3   # uncomment/add if you have 3 plants
+```
+
+Do **not** change `train:` and `val:` unless told to.
+
+After this, YOLO will know:
+
+- Where your dataset is (in your folder)  
+- What class IDs exist and what to call them
+
+---
+
+## 8. Step 4 – (Optional) Check Dataset Structure with `file_structure.py`
+
+To catch missing labels or mismatched files, run:
+
+```bash
+cd /home/compsci/Desktop/YOUR_NAME_plants
+source /home/compsci/Desktop/plants/.venv/bin/activate
+
+python file_structure.py
+```
+
+This helper script will typically:
+
+- Check that every image in `images/train` has a corresponding label in `labels/train`  
+- Do the same for `val`  
+- Print warnings if anything is broken
+
+Fix any issues it reports **before** training.
+
+---
+
+## 9. Step 5 – Train the YOLO Model
+
+Time to train your plant detector.
+
+```bash
+cd /home/compsci/Desktop/YOUR_NAME_plants
+source /home/compsci/Desktop/plants/.venv/bin/activate
+
+yolo detect train   model=yolov8n.pt   data=plant_data.yaml   epochs=30   imgsz=640   batch=16   device=0
+```
+
+Arguments:
+
+- `model=yolov8n.pt` → start from the small pre-trained YOLO model  
+- `data=plant_data.yaml` → your dataset config  
+- `epochs=30` → how many times to go through the training data  
+- `imgsz=640` → resize images to 640×640  
+- `batch=16` → number of images per training step  
+- `device=0` → use GPU 0 (the RTX card)
+
+When done, check:
+
+```text
+runs/detect/train/
+  weights/
+    best.pt   # best model on validation set
+    last.pt   # final model after last epoch
+```
+
+Use **`best.pt`** for evaluation and demos.
+
+---
+
+## 10. Step 6 – Run Predictions on Your Images
+
+### 10.1 Visual predictions with YOLO CLI
+
+To draw bounding boxes on your validation images:
+
+```bash
+cd /home/compsci/Desktop/YOUR_NAME_plants
+source /home/compsci/Desktop/plants/.venv/bin/activate
+
+yolo detect predict   model=runs/detect/train/weights/best.pt   source="plants_yolo_dataset/images/val"   conf=0.25
+```
+
+YOLO will create a folder:
+
+```text
+runs/detect/predict/
+  image1.jpg   # with boxes and labels drawn
+  image2.jpg
+  ...
+```
+
+Open these images (on the server) and check:
+
+- Are your plants detected?
+- Are the labels correct (Plant 1 vs Plant 2)?
+
+If your model is missing plants, try lowering the confidence threshold:
+
+```bash
+yolo detect predict   model=runs/detect/train/weights/best.pt   source="plants_yolo_dataset/images/val"   conf=0.10
+```
+
+**Concept:**  
+- Higher `conf` → fewer, more certain detections (higher precision)  
+- Lower `conf` → more detections (higher recall) but possibly more incorrect ones
+
+---
+
+## 11. Step 7 – Debug Predictions with `debug_model.py` (IB-Level Understanding)
+
+For IB, you must be able to explain:
+
+- What predictions the model is making  
+- How confident it is  
+- How you evaluated it
+
+Use `debug_model.py` to see the raw predictions:
+
+```bash
+cd /home/compsci/Desktop/YOUR_NAME_plants
+source /home/compsci/Desktop/plants/.venv/bin/activate
+
+python debug_model.py   runs/detect/train/weights/best.pt   "/ABSOLUTE/PATH/TO/ONE_TEST_IMAGE.jpg"
+```
+
+Example output:
+
+```text
+image 1/1 ... image(1022).jpg: 384x640 1 Plant 1, 1 Plant 2, 15.1ms
+
+=== Result 0 ===
+Image: /home/compsci/Downloads/.../image(1022).jpg
+  Box 0: class=0 conf=0.511 xyxy=[...]
+  Box 1: class=1 conf=0.100 xyxy=[...]
+```
+
+Interpret this:
+
+- `class=0` → Plant 1  
+- `class=1` → Plant 2  
+- `conf=0.511` → about 51% confidence  
+- `conf=0.100` → only 10% confident about Plant 2 (very unsure)
+
+If `conf` is lower than your chosen threshold (e.g., 0.25), YOLO’s visual prediction command will **hide** that box, even though the model “suspected” it.
+
+This is great evaluation material:
+
+- How thresholds affect what you see  
+- Why some true plants don’t appear in the visualization  
+- How to discuss precision vs recall in your write-up
+
+---
+
+## 12. Common Errors & How to Troubleshoot
+
+### ❌ Error: “FigureCanvasAgg is non-interactive, and thus cannot be shown”
+
+You might be:
+
+- Running `define_masks.py` over SSH or without a graphical session, or  
+- In the wrong environment/backend.
+
+Make sure:
+
+- You are physically at the server machine (with monitor & keyboard), **not** SSH’d in  
+- You activated the `.venv`
+
+Your teacher has already configured a working interactive backend.
+
+---
+
+### ❌ Error: “FileNotFoundError: ... image(123).jpg”
+
+Check:
+
+- The path you passed as `"/ABSOLUTE/PATH/TO/YOUR_PI_IMAGES"` is correct  
+- The filenames in `masks.json` actually exist in that folder  
+- You didn’t mistype the path or forget quotes
+
+---
+
+### ❌ Error during training about `data=plant_data.yaml`
+
+Likely causes:
+
+- `path:` in `plant_data.yaml` points to the wrong place  
+- You renamed your folder but didn’t update YAML  
+- Indentation error in the YAML file
+
+Double-check:
+
+```yaml
+path: /home/compsci/Desktop/YOUR_NAME_plants/plants_yolo_dataset
+train: images/train
+val: images/val
+```
+
+No tabs. Use spaces.
+
+---
+
+### ❌ “No labels found” or strange training results
+
+- Did `convert_masks_to_yolo.py` run without errors?  
+- Do you have `.txt` files in `plants_yolo_dataset/labels/train` and `/val`?  
+- Run:
+
+```bash
+python file_structure.py
+```
+
+to spot missing/mismatched labels.
+
+---
+
+## 13. Quick Command Cheat-Sheet
+
+Replace `YOUR_NAME` and paths where needed.
+
+```bash
+# 1) Go to your folder
+cd /home/compsci/Desktop/YOUR_NAME_plants
+
+# 2) Activate environment
+source /home/compsci/Desktop/plants/.venv/bin/activate
+
+# 3) Label plants
+python define_masks.py "/ABSOLUTE/PATH/TO/YOUR_PI_IMAGES" masks.json --plant_ids 1 2
+
+# 4) Convert to YOLO dataset
+python convert_masks_to_yolo.py masks.json "/ABSOLUTE/PATH/TO/YOUR_PI_IMAGES" --out_root plants_yolo_dataset
+
+# 5) Fix plant_data.yaml (set path: to /home/compsci/Desktop/YOUR_NAME_plants/plants_yolo_dataset)
+
+# 6) (Optional) Check dataset
+python file_structure.py
+
+# 7) Train model
+yolo detect train model=yolov8n.pt data=plant_data.yaml epochs=30 imgsz=640 batch=16 device=0
+
+# 8) Visual predictions
+yolo detect predict model=runs/detect/train/weights/best.pt source="plants_yolo_dataset/images/val" conf=0.25
+
+# 9) Debug predictions
+python debug_model.py runs/detect/train/weights/best.pt "/ABSOLUTE/PATH/TO/ONE_TEST_IMAGE.jpg"
+```
+
+You can copy/paste these and just replace `YOUR_NAME` and the Pi image path with your own values.
+
+Good luck—and remember, part of the goal is **understanding** what the model does and where it fails, not just getting perfect green boxes.
