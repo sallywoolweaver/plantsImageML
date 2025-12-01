@@ -1,15 +1,47 @@
 
-# 🌱 Plant Image ML — Student README  
-**Raspberry Pi → Linux Server → YOLO Object Detection Pipeline**  
+# 🌱 Plant Image ML — Student Guide  
 
 
-This guide walks you **step‑by‑step** through the entire workflow to train your own plant-detection ML model on our Linux GPU server.  
+This project teaches you how to train your **own object detection machine learning model** to recognize your **three plants** in your Raspberry Pi watering system photos.
+
+You will:
+
+- Build a **supervised learning** dataset from your own images  
+- Convert polygon masks → YOLO **bounding boxes**  
+- Train a **YOLO** object detection model on the Linux ML server (RTX 4080)  
+- Evaluate your model using **validation images & metrics**  
+- Connect all of this to the **IB Computer Science 2027 syllabus (A4.x Machine Learning)**
 
 ---
 
-# 📌 1. Create Your Working Folder
+## 🌐 Big Picture: What Kind of ML Is This?
 
-All work happens inside your own directory on the server.
+This project is:
+
+- **Supervised learning**  
+  - You provide labelled examples (plants with bounding boxes)  
+  - The model learns a mapping: `image → (plant class + box location)`
+- A **classification + localization** task  
+  - Classifies: Plant 1 vs Plant 2 vs Plant 3  
+  - Localizes: where each plant is in the image
+- Implemented with **YOLO** (You Only Look Once)  
+  - A deep learning–based **object detection** model
+
+IB links (HL Machine Learning):
+
+- A4.2: Data preprocessing  
+- A4.3: Supervised learning, classification  
+- A4.5: Data sets and features  
+- A4.6: Perception and pattern recognition  
+- A4.7: Evaluation and performance measures  
+
+---
+
+# 1️⃣ Setup: Your Personal Folder on the Server
+
+Each student works in **their own folder**.
+
+On the Linux server:
 
 ```bash
 cd ~/Desktop
@@ -20,266 +52,440 @@ cd <yourname>_plants
 Example:
 
 ```bash
-mkdir alex_plants
-cd alex_plants
+cd ~/Desktop
+mkdir maya_plants
+cd maya_plants
 ```
 
 ---
 
-# 📌 2. Clone the Teacher Repo Into Your Folder
+# 2️⃣ Get the Project Files Into Your Folder
 
-Do **NOT** clone into `/Desktop/plants`.  
-Clone inside *your personal folder*.
+Clone the teacher repo **inside your own folder**:
 
 ```bash
 git clone https://github.com/sallywoolweaver/plantsImageML .
 ```
 
-You should now see:
+You should now see files like:
 
-```
+```text
 convert_masks_to_yolo.py
 define_masks.py
 debug_model.py
-plant_data.yaml
+file_structure.py
 yolov8n.pt
 ...
 ```
 
+Now copy in **your own data**:
+
+- `masks.json` (exported from the Pi; contains your polygons)  
+- `raspberry_images/` (folder with your plant photos)
+
+Your folder should look like:
+
+```text
+~/Desktop/<yourname>_plants/
+    masks.json
+    raspberry_images/
+    convert_masks_to_yolo.py
+    file_structure.py
+    debug_model.py
+    define_masks.py
+    yolov8n.pt
+    ...
+```
+
+> 🔎 You are reusing your existing masks — you do **not** redraw them.
+
 ---
 
-# 📌 3. Activate Python Virtual Environment
+# 3️⃣ Activate the Shared Python Environment
 
-Every student uses the shared `.venv` located on the server.
+We use a **shared virtual environment** already set up on the server.
 
 ```bash
-cd ~/Desktop/plants/.venv
-source bin/activate
+source ~/Desktop/plants/.venv/bin/activate
 ```
 
-You should now see:
+Your prompt should now start with:
 
-```
+```text
 (.venv) compsci@...
 ```
 
-Then return to your folder:
+Then:
 
 ```bash
 cd ~/Desktop/<yourname>_plants
 ```
 
----
-
-# 📌 4. Upload Your Images From the Raspberry Pi
-
-Put your `.jpg` images into a folder:
-
-```
-/home/compsci/Desktop/<yourname>_plants/raspberry_images/
-```
-
-Make sure all filenames are valid.  
-Avoid spaces—use `image001.jpg`, `image002.jpg`, etc.
+Every command from now on runs **inside** this environment.
 
 ---
 
-# 📌 5. Draw Masks (Polygon annotations) for Each Plant
+# 4️⃣ Convert Polygons → YOLO Bounding Boxes
 
-You must manually outline each plant **one time** in a few reference images.
+Your `masks.json` contains **polygons** (multiple points clicked around each plant).  
+YOLO **cannot** use polygons directly. It needs **bounding boxes** in a specific numeric format.
 
-Run:
-
-```bash
-python define_masks.py raspberry_images masks.json --plant_ids 1 2 3
-```
-
-Controls:
-
-| Action | Key |
-|-------|------|
-| Add a point | left click |
-| Undo point | backspace |
-| Reset polygon | ESC |
-| Finish plant | ENTER |
-| Quit without saving | Q |
-
-This saves a `masks.json` file with your polygons.
-
----
-
-# 📌 6. Convert Masks → Bounding Boxes (YOLO format)
-
-YOLO requires bounding boxes, not polygons.
-
-Run:
+You convert them with:
 
 ```bash
 python convert_masks_to_yolo.py masks.json raspberry_images
 ```
 
-This generates:
+This script:
 
-```
+1. Loads your `masks.json` (plant polygons)  
+2. For each polygon, finds:
+   - `min_x`, `max_x`, `min_y`, `max_y`  
+   - Computes the smallest **upright rectangle** that contains the polygon
+3. Computes:
+   - `width  = max_x - min_x`  
+   - `height = max_y - min_y`  
+   - `center_x = (min_x + max_x) / 2`  
+   - `center_y = (min_y + max_y) / 2`  
+4. **Normalizes** these values by the image size so everything is between 0 and 1:
+   - `x_center_norm = center_x / image_width`  
+   - `y_center_norm = center_y / image_height`  
+   - `width_norm    = width / image_width`  
+   - `height_norm   = height / image_height`
+5. Saves YOLO label files like:
+
+   ```text
+   plants_yolo_dataset/labels/image(1022).txt
+   ```
+
+   Each line is:
+
+   ```text
+   class_id x_center y_center width height
+   ```
+
+   For example, for 3 plants:
+
+   ```text
+   0 0.35 0.60 0.20 0.30   # Plant 1
+   1 0.65 0.58 0.22 0.29   # Plant 2
+   2 0.50 0.25 0.18 0.20   # Plant 3
+   ```
+
+> 🧠 **Why center coordinates?**  
+> YOLO divides the image into a grid and predicts objects by their **center point** and size.  
+> Using center x/y, width, and height makes prediction faster and simpler for the network.
+
+After this step you’ll have:
+
+```text
 plants_yolo_dataset/
-    images/
-    labels_yolo/
+    images/        # copies of your images
+    labels_yolo/   # YOLO-format bounding boxes
 ```
 
 ---
 
-# 📌 7. Understand `plant_data.yaml` (important!)
+# 5️⃣ Split Into Training + Validation Sets (Critical ML Concept)
 
-YOLO training uses a config file called **YAML**.
-
-### 📘 What is YAML?
-A `.yaml` file is a simple text format used to store **settings**, like:
-
-- where your images are  
-- where your labels are  
-- what class numbers mean  
-
-Example:
-
-```yaml
-path: plants_yolo_dataset
-
-train: images/train
-val: images/val
-
-names:
-  0: Plant 1
-  1: Plant 2
-  2: Plant 3
-```
-
-YOLO reads this file automatically.
-
----
-
-# 📌 8. Split the Dataset Into Training & Validation
-
-Run the script:
+Run:
 
 ```bash
 python file_structure.py
 ```
 
-This creates:
+This script is doing **real ML data preparation** — not just file shuffling.
 
+It creates:
+
+```text
+plants_yolo_dataset/images/train/
+plants_yolo_dataset/images/val/
+plants_yolo_dataset/labels/train/
+plants_yolo_dataset/labels/val/
 ```
-plants_yolo_dataset/images/train
-plants_yolo_dataset/images/val
-plants_yolo_dataset/labels/train
-plants_yolo_dataset/labels/val
-```
+
+### Why do we split the data?
+
+In supervised learning we must **train** and **evaluate** on different images.
+
+- **Training set**:  
+  YOLO learns patterns from these images:
+  - shapes, textures, brightness, positions of the plants  
+  - which region belongs to Plant 1 vs Plant 2 vs Plant 3  
+
+- **Validation set**:  
+  Used **only for testing** during training:
+  - the model does **not** learn from these  
+  - helps measure performance on **unseen** images  
+  - prevents **overfitting** (memorizing instead of learning)
+
+The script typically splits your data like:
+
+- ~80% of images → `train`  
+- ~20% of images → `val`
+
+YOLO uses the validation set to compute:
+
+- **Precision** (of the boxes I predicted, how many were correct?)  
+- **Recall** (of all real plant boxes, how many did I find?)  
+- **mAP@50** (overall detection quality)  
+- and generates `val_batch0_pred.jpg` — a picture of its predictions on your val images.
+
+> 📌 IB Connection:  
+> - A4.2 Data preprocessing  
+> - A4.3 Supervised learning & evaluation  
+> - A4.5 Overfitting & generalization  
 
 ---
 
-# 📌 9. Train YOLO on the Server GPU
+# 6️⃣ Create Your Own `plant_data.yaml`
 
-Run:
+We **do not commit** `plant_data.yaml` to GitHub, because each student’s folder paths are different.
+
+> In the repo’s `.gitignore` we add:
+> ```text
+> plant_data.yaml
+> ```
+
+### You must create your own config file:
+
+From inside your folder:
 
 ```bash
-yolo detect train model=yolov8n.pt data=plant_data.yaml epochs=30 imgsz=640 device=0
+nano plant_data.yaml
 ```
 
-This will produce:
+Paste this (update `<yourname>_plants`):
 
-```
-runs/detect/train/
-    weights/best.pt
-    weights/last.pt
+```yaml
+# plant_data.yaml - YOUR YOLO dataset configuration
+
+train: /home/compsci/Desktop/<yourname>_plants/plants_yolo_dataset/images/train
+val: /home/compsci/Desktop/<yourname>_plants/plants_yolo_dataset/images/val
+
+nc: 3
+names: ["Plant 1", "Plant 2", "Plant 3"]
 ```
 
-`best.pt` = your trained model.
+Save & exit:
+
+- `CTRL + O` → Enter  
+- `CTRL + X` → Exit
+
+### What is YAML?
+
+YAML = **Y**et **A**nother **M**arkup **L**anguage.
+
+It’s a simple text format used for **configuration**. YOLO reads:
+
+- where your images are (`train`, `val`)  
+- how many classes (`nc`)  
+- what each class is called (`names`)
+
+> IB link: this is part of understanding **how ML systems are configured** and how data and labels are structured.
 
 ---
 
-# 📌 10. Test Your Model on Your Own Images
+# 7️⃣ Train Your YOLO Model (Supervised Learning in Action)
+
+Now run training:
+
+```bash
+yolo detect train \
+  model=yolov8n.pt \
+  data=plant_data.yaml \
+  epochs=30 \
+  imgsz=640 \
+  device=0
+```
+
+### What each part means:
+
+| Piece | Meaning |
+|-------|---------|
+| `yolo detect train` | Use YOLO to train an **object detection** model |
+| `model=yolov8n.pt`  | Start from pre-trained YOLOv8 nano (small, fast model) |
+| `data=plant_data.yaml` | Use your dataset & class definitions |
+| `epochs=30` | Train for 30 passes over the **training set** |
+| `imgsz=640` | Resize all images to 640×640 for training |
+| `device=0` | Use GPU #0 (the RTX 4080) |
+
+### What is an epoch?
+
+One **epoch** = YOLO has seen **all training images once**.
+
+- Too few epochs → **underfitting**  
+  - hasn’t learned enough  
+- Too many epochs → **overfitting**  
+  - memorizes training images instead of learning patterns  
+
+30 epochs is reasonable for this project.
+
+During training you will see loss and metric values change — this is the model improving.
+
+> IB links:  
+> - A4.3 Supervised learning loop  
+> - A4.5 Training vs overfitting/underfitting  
+> - A4.7 Hyperparameters & tuning  
+
+---
+
+# 8️⃣ What YOLO Produces
+
+After training, look in:
+
+```text
+runs/detect/train/
+```
+
+Key files:
+
+- `weights/best.pt` → 🔑 **Your trained model**  
+- `weights/last.pt` → Model at final epoch  
+- `val_batch0_pred.jpg` → 🔍 YOLO’s predictions on validation images  
+- `results.csv`, `results.png` → metrics over epochs  
+
+You **must** keep `best.pt` and `val_batch0_pred.jpg` — they’re part of your grade.
+
+---
+
+# 9️⃣ Test Your Model on Your Own Images
+
+To carefully inspect predictions:
 
 ```bash
 python debug_model.py runs/detect/train/weights/best.pt raspberry_images
 ```
 
-Output example:
+This prints out all detections with:
 
-```
-class=0 conf=0.51
-class=1 conf=0.10
-```
+- class id (0, 1, 2 = Plant 1, 2, 3)  
+- confidence  
+- bounding box coordinates  
 
-If Plant 2 has low confidence, lower the threshold:
+You can also have YOLO annotate images:
 
 ```bash
-yolo detect predict model=runs/detect/train/weights/best.pt source=raspberry_images conf=0.10
+yolo detect predict \
+  model=runs/detect/train/weights/best.pt \
+  source=raspberry_images \
+  conf=0.10
 ```
+
+- `conf=0.10` lowers the confidence threshold, so even weak detections appear  
+- If Plant 2 or Plant 3 is missing at `0.25`, try `0.10`
+
+> This connects to IB’s ideas about **precision, recall, and thresholds**.
 
 ---
 
-# 📌 11. Troubleshooting Guide
+# 🔟 Required Deliverables (What You Submit)
 
-### ❌ YOLO shows only Plant 1  
-Probably confidence is too high. Lower it:
+Each student submits:
 
-```bash
-conf=0.05
-```
+### 1. Model + Prediction Artifacts
 
-### ❌ “No labels found”  
-Run:
+- `runs/detect/train/weights/best.pt`  
+  → your trained YOLO model  
+- `runs/detect/train/val_batch0_pred.jpg`  
+  → validation prediction grid  
+- At least **one screenshot** of YOLO predictions on your own `raspberry_images/` (can be from `predict/` output)
 
-```bash
-python debug_labels.py
-```
+### 2. Short Written Reflection (about ½ page)
 
-Check if both classes appear.
+You should be able to explain:
 
-### ❌ Predict window not showing  
-Make sure backend is:
+- Why this is **supervised learning**  
+- Why your project uses **classification + localization**  
+- How polygons became bounding boxes  
+- Why we normalize `[x_center, y_center, width, height]`  
+- Why we split into **training** & **validation** sets  
+- What **epochs** are and how they affected your results  
+- What **val_batch0_pred.jpg** shows about your model  
+- Where your model struggled (e.g., occlusion, similar-looking plants)  
+- What you would do to improve it (more data, better lighting, more labeling, hyperparameters)
 
-```bash
-python3 -c "import matplotlib; print(matplotlib.get_backend())"
-```
-
-Should output: `TkAgg`.
-
----
-
-# 📌 12. Final Deliverable for Your Grade
-
-Each student must turn in:
-
-### ✅ 1. Your YOLO model folder  
-`runs/detect/train/weights/best.pt`
-
-### ✅ 2. A short reflection describing:
-- How well your model works  
-- Precision/Recall for Plant 1 and Plant 2  
-- What confused the model  
-- What you would improve with more time/data  
-
-### ✅ 3. A screenshot of detections on new images
-
-### ✅ 4. Explanation of:
-- What YAML means  
-- Why we annotated polygons  
-- Why YOLO requires bounding boxes  
-- Why confidence threshold matters  
+IB-style discussion: talk about **generalization, bias, overfitting, data quality**.
 
 ---
 
-# 🎉 You Now Have Your Own Object Detection Model!
+# 1️⃣1️⃣ ML Concepts You Must Be Able to Explain (IB Style)
 
-Your model is *exactly* the same technology companies use for:
+These are things IB can ask you about, and you should be able to answer using this project as your example.
 
-- Self-driving cars  
-- Farm crop monitoring  
-- Medical image detection  
-- Robotics  
+### 🧠 Supervised Learning
 
+- Input: plant images  
+- Output: plant class + bounding box  
+- Labels: you created them via masks → bounding boxes  
+- The algorithm adjusts its internal weights based on error  
 
+### 🧠 Data Preprocessing
+
+- Splitting into train/val  
+- Converting polygons to YOLO bounding boxes  
+- Normalizing coordinates  
+- Ensuring labels and images match 1:1  
+
+### 🧠 Overfitting vs Generalization
+
+- Overfitting: model “memorizes” training images  
+- Generalization: model works on **new** images  
+- Validation set is used to estimate this  
+
+### 🧠 Evaluation
+
+Through YOLO’s training logs & `val_batch0_pred.jpg`, you see:
+
+- Box precision/recall  
+- Per-class performance (Plant 1, Plant 2, Plant 3)  
+- Confidence scores  
+
+### 🧠 Hyperparameters
+
+You controlled:
+
+- `epochs`  
+- `imgsz`  
+- (optionally) confidence threshold at prediction time  
+
+You should be able to describe:
+
+- How these affected the model  
+- What you would change if your model was underperforming  
 
 ---
 
-If anything breaks, ask questions — the errors are part of the learning process.
+# 1️⃣2️⃣ Troubleshooting Tips
+
+### ❌ YOLO says: “no labels found”
+Check:
+
+- Did `convert_masks_to_yolo.py` run without errors?  
+- Are there `.txt` files in `plants_yolo_dataset/labels_yolo/`?  
+- Are the filenames exactly matching the images?
+
+### ❌ Training runs but nothing seems to learn
+
+- Check that you actually have:
+  - at least a few dozen labeled images  
+  - all three plants labeled consistently  
+- Check that `nc: 3` and `names` has 3 classes  
+
+### ❌ Only Plant 1 is ever detected
+
+- Lower `conf` during prediction: `conf=0.10`  
+- Make sure Plant 2 and Plant 3 are actually labeled in multiple images  
+- Look at `val_batch0_pred.jpg` to see what YOLO is “thinking”
+
+---
+
+You are now working with the same kinds of ML tools used in:
+
+- Autonomous vehicles  
+- Agricultural monitoring systems  
+- Industrial robotics  
+- Medical imaging  
+
+…and doing it on **your own real-world plant data**. That’s exactly the kind of authentic, higher-level computing IB is aiming for.
