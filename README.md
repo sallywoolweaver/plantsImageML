@@ -292,12 +292,7 @@ It’s a simple text format used for **configuration**. YOLO reads:
 Now run training:
 
 ```bash
-yolo detect train \
-  model=yolov8n.pt \
-  data=plant_data.yaml \
-  epochs=30 \
-  imgsz=640 \
-  device=0
+yolo detect train model=yolov10m.pt data=plant_data.yaml epochs=100 imgsz=640 batch=16 device=0
 ```
 
 ### What each part means:
