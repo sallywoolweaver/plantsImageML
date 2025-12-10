@@ -133,7 +133,8 @@ YOLO **cannot** use polygons directly. It needs **bounding boxes** in a specific
 You convert them with:
 
 ```bash
-python convert_masks_to_yolo.py masks.json raspberry_images
+python3 convert_masks_to_yolo.py masks.json --out raspberry_images
+
 ```
 You might run into an error because your masks.json file is pointing the images to your raspberry pi folder instead of your new folder. Open your masks.json folder and Control+F and find and replace the old path with the new paths
 
