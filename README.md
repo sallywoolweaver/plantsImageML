@@ -193,7 +193,7 @@ plants_yolo_dataset/
 Run:
 
 ```bash
-python file_structure.py
+python3 file_structure.py masks.json "root/path/to/images"
 ```
 
 This script is doing **real ML data preparation** — not just file shuffling.
