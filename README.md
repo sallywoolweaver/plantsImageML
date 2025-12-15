@@ -128,7 +128,7 @@ Every command from now on runs **inside** this environment.
 # 4️⃣ Convert Polygons → YOLO Bounding Boxes
 
 Your `masks.json` contains **polygons** (multiple points clicked around each plant).  
-YOLO **cannot** use polygons directly. It needs **bounding boxes** in a specific numeric format.
+YOLO **cannot** use polygons directly. It needs **bounding boxes** in a specific numeric format. You need to move your masks.json file into your folder that you just created.
 
 You convert them with:
 
